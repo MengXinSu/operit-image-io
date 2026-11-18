@@ -1,0 +1,12 @@
+{
+  "private": true,
+  "name": "operit-image-io",
+  "version": "1.1.1",
+  "description": "Operit2 plugin: feed images straight into the model context, or send them into the chat.",
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  }
+}
