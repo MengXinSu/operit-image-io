@@ -2,7 +2,7 @@
   "schema_version": 1,
   "api_version": "2.0.0",
   "toolpkg_id": "com.viya.image_io",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "author": [
     "Viya"
   ],
