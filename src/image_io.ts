@@ -102,19 +102,19 @@
 const IMAGE_PATTERN = /\.(png|jpe?g|webp|gif|bmp)$/i;
 const MAX_DEPTH = 4;
 
-function reasonOf(error: unknown): string {
+function reasonOf(error) {
     if (error instanceof Error) {
         return error.message;
     }
     return String(error);
 }
 
-function ok(message: string, data: unknown): any {
+function ok(message, data) {
     return { success: true, message: message, data: data };
 }
 
-function fail(message: string, data?: unknown): any {
-    const out: any = { success: false, message: message };
+function fail(message, data) {
+    const out = { success: false, message: message };
     if (data !== undefined) {
         out.data = data;
     }
@@ -122,7 +122,7 @@ function fail(message: string, data?: unknown): any {
 }
 
 /** 工具返回值可能被包一层 data，这里统一摊平成一层。 */
-function unwrap(source: any, key: string): any {
+function unwrap(source, key) {
     if (!source || typeof source !== "object") {
         return undefined;
     }
@@ -144,7 +144,7 @@ function unwrap(source: any, key: string): any {
  *   /virtual/...              →  原样
  *   其他（相对工作区）         →  原样
  */
-function toVfsPath(path: string): string {
+function toVfsPath(path) {
     const raw = String(path || "").trim();
 
     if (!raw) {
@@ -155,7 +155,7 @@ function toVfsPath(path: string): string {
         return raw;
     }
 
-    let rest: string | null = null;
+    let rest = null;
     if (raw.indexOf("/storage/emulated/0/") === 0) {
         rest = raw.slice("/storage/emulated/0/".length);
     } else if (raw.indexOf("/storage/self/primary/") === 0) {
@@ -177,7 +177,7 @@ function toVfsPath(path: string): string {
  * 把任意形态的输入递归拍平成一串不重复的路径。
  * 接受：字符串、数组、嵌套数组、JSON 数组字符串、换行/逗号分隔字符串。
  */
-function flattenPaths(input: unknown, depth: number, out: string[], seen: Record<string, boolean>): void {
+function flattenPaths(input, depth, out, seen) {
     if (input === null || input === undefined || depth > MAX_DEPTH) {
         return;
     }
@@ -233,9 +233,9 @@ function flattenPaths(input: unknown, depth: number, out: string[], seen: Record
 }
 
 /** 从工具参数里取出全部目标路径。 */
-function resolveTargets(params: any): string[] {
-    const out: string[] = [];
-    const seen: Record<string, boolean> = {};
+function resolveTargets(params) {
+    const out = [];
+    const seen = {};
     const bag = params || {};
     flattenPaths(bag.path, 0, out, seen);
     flattenPaths(bag.paths, 0, out, seen);
@@ -244,18 +244,13 @@ function resolveTargets(params: any): string[] {
 
 // ---------------------------------------------------------------- 批处理
 
-interface BatchResult {
-    done: any[];
-    failed: any[];
-}
-
 /**
  * 对每个路径执行同一个动作，收集成功与失败。
  * 单个失败不影响其余，全部失败由调用方决定如何表述。
  */
-async function runEach(targets: string[], action: (path: string) => Promise<any>): Promise<BatchResult> {
-    const done: any[] = [];
-    const failed: any[] = [];
+async function runEach(targets, action) {
+    const done = [];
+    const failed = [];
 
     for (const path of targets) {
         try {
@@ -269,7 +264,7 @@ async function runEach(targets: string[], action: (path: string) => Promise<any>
 }
 
 /** 拼一句「成功 N 张（M 张失败）」的摘要。 */
-function summarize(done: number, failed: number, verb: string): string {
+function summarize(done, failed, verb) {
     let text = verb + " " + done + " 张图片";
     if (failed > 0) {
         text += "，" + failed + " 张失败";
@@ -279,18 +274,13 @@ function summarize(done: number, failed: number, verb: string): string {
 
 // ---------------------------------------------------------------- 读图
 
-interface AttachedImage {
-    path: string;
-    raw: string;
-}
-
 /**
  * 把一张图送进模型上下文。
  *
  * 走 read_file + direct_image:true：宿主会把这文件直接注册成图片附件，
  * 模型看到的是画面本身，而不是文本解码结果。
  */
-async function attachImage(vfsPath: string): Promise<AttachedImage> {
+async function attachImage(vfsPath) {
     const raw = await toolCall("read_file", {
         path: vfsPath,
         direct_image: true
@@ -299,7 +289,7 @@ async function attachImage(vfsPath: string): Promise<AttachedImage> {
     // 宿主返回 FileContentData。必须把原始结构原样带回去：
     // 宿主靠识别返回值里的 __type__ 决定是否把图片挂到这一轮上下文。
     // 拆开重组会丢掉该标记，图片就送不进去。
-    let serialized: string;
+    let serialized;
     try {
         serialized = dataUtils.stringifyJson(raw);
     } catch (error) {
@@ -314,14 +304,14 @@ async function attachImage(vfsPath: string): Promise<AttachedImage> {
 
 // ---------------------------------------------------------------- 三个工具
 
-async function readImage(params: any): Promise<any> {
+async function readImage(params) {
     const targets = resolveTargets(params);
 
     if (targets.length === 0) {
         return fail("没有收到图片路径：请提供 path 或 paths");
     }
 
-    const batch = await runEach(targets, function (path: string) {
+    const batch = await runEach(targets, function (path) {
         return attachImage(toVfsPath(path));
     });
 
@@ -339,13 +329,17 @@ async function readImage(params: any): Promise<any> {
     });
 }
 
-/** 绝对路径补 file://，相对路径原样交给界面解析。 */
-function toReference(path: string, alt: string): string {
-    const source = path.charAt(0) === "/" ? "file://" + path : path;
-    return "![" + alt.replace(/[[\]]/g, "") + "](" + source + ")";
+/**
+ * 生成 Markdown 图片引用。
+ *
+ * 路径必须先映射成 VFS 路径：界面只认 /virtual/... 这类 VFS 路径，
+ * 直接给 file:///storage/... 或设备绝对路径会渲染失败（只显示占位符）。
+ */
+function toReference(path, alt) {
+    return "![" + alt.replace(/[[\]]/g, "") + "](" + toVfsPath(path) + ")";
 }
 
-async function sendImage(params: any): Promise<any> {
+async function sendImage(params) {
     const targets = resolveTargets(params);
 
     if (targets.length === 0) {
@@ -355,7 +349,7 @@ async function sendImage(params: any): Promise<any> {
     const altBase = String((params && params.alt) || "图片").trim() || "图片";
     let index = 0;
 
-    const batch = await runEach(targets, async function (path: string) {
+    const batch = await runEach(targets, async function (path) {
         if (!IMAGE_PATTERN.test(path)) {
             throw new Error("扩展名不是图片格式");
         }
@@ -374,7 +368,7 @@ async function sendImage(params: any): Promise<any> {
         });
     }
 
-    const lines: string[] = [];
+    const lines = [];
     for (const item of batch.done) {
         lines.push(item.markdown);
     }
@@ -391,7 +385,7 @@ async function sendImage(params: any): Promise<any> {
 }
 
 /** 截图并返回文件路径：只用宿主内置截图，不做平台猜测。 */
-async function grabScreen(): Promise<{ path: string; via: string }> {
+async function grabScreen() {
     const shot = await toolCall("capture_screenshot", {});
     const candidate = typeof shot === "string"
         ? shot
@@ -406,10 +400,10 @@ async function grabScreen(): Promise<{ path: string; via: string }> {
     return { path: String(candidate), via: "capture_screenshot" };
 }
 
-async function readScreen(params: any): Promise<any> {
+async function readScreen(params) {
     const bag = params || {};
 
-    let captured: { path: string; via: string };
+    let captured;
     try {
         captured = await grabScreen();
     } catch (error) {
@@ -448,8 +442,8 @@ async function readScreen(params: any): Promise<any> {
 
 // ---------------------------------------------------------------- 导出
 
-function guard(fn: (params: any) => Promise<any>) {
-    return async function (params: any) {
+function guard(fn) {
+    return async function (params) {
         try {
             complete(await fn(params || {}));
         } catch (error) {
