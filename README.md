@@ -67,10 +67,12 @@ send_image(path: "photo.jpg", alt: "相册照片")
 返回一条 Markdown 图片引用：
 
 ```json
-{ "data": { "markdown": "![相册照片](file:///path/to/photo.jpg)" } }
+{ "data": { "markdown": "![相册照片](/virtual/android/sdcard/DCIM/Camera/photo.jpg)" } }
 ```
 
 把 `data.markdown` 原样输出在回复里，图片就会在对话界面渲染出来。
+
+> 引用里的路径是 **VFS 路径**（`/virtual/android/sdcard/...`）。对话渲染层只认这种格式，加 `file://` 前缀或用设备路径都会渲染成空白占位符。
 
 **不消耗看图 token** —— 图没有进模型上下文，只是让界面显示。适合「把这个结果给你看」这类场景。
 
@@ -128,6 +130,8 @@ read_screen(save_path: "/sdcard/Pictures/here.png")
 2. **返回值不能重组。** 读图接口返回的结构带有类型标记，宿主靠它决定是否把图片挂进本轮上下文。拆开只取部分字段会让图片丢失。
 
 3. **发图不做存在性校验。** 宿主的文件检查走 VFS，设备路径会被错译，真实存在的图片会被误判为不存在。渲染失败时界面会直接显形，不需要预检。
+
+4. **发图引用必须用 VFS 路径。** 对话渲染层只认 `/virtual/android/sdcard/...`，加 `file://` 前缀或直接给设备路径都会渲染失败。
 
 ---
 
