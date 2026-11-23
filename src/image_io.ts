@@ -15,15 +15,15 @@
     {
       "name": "read_image",
       "description": {
-        "zh": "读取一张或多张图片，注册为多模态图片送入模型上下文，让模型真正看到画面（不做 OCR）。支持相册路径、截图路径、工作区相对路径。",
-        "en": "Read one or more images and register them as multimodal images in the model context so the model actually sees the picture (no OCR)."
+        "zh": "读取一张或多张图片，注册为多模态图片送入模型上下文，让模型真正看到画面（不做 OCR）。支持设备绝对路径、VFS 路径、工作区相对路径。",
+        "en": "Read one or more images and register them as multimodal images in the model context so the model actually sees the picture (no OCR). Accepts device absolute paths, VFS paths, and workspace-relative paths."
       },
       "parameters": [
         {
           "name": "path",
           "description": {
-            "zh": "单张图片路径，绝对路径或相对当前工作区。",
-            "en": "Single image path, absolute or relative to the workspace."
+            "zh": "单张图片路径。",
+            "en": "Single image path."
           },
           "type": "string",
           "required": false
@@ -49,8 +49,8 @@
         {
           "name": "path",
           "description": {
-            "zh": "单张图片路径，绝对路径或相对当前工作区。",
-            "en": "Single image path, absolute or relative to the workspace."
+            "zh": "单张图片路径。",
+            "en": "Single image path."
           },
           "type": "string",
           "required": false
@@ -85,8 +85,8 @@
         {
           "name": "save_path",
           "description": {
-            "zh": "可选，把截图另存一份到指定位置。",
-            "en": "Optional path to additionally save a copy of the screenshot."
+            "zh": "可选，截图保存路径。不传时自动保存到临时目录并带时间戳。",
+            "en": "Optional save path. Defaults to a timestamped file in the temp directory."
           },
           "type": "string",
           "required": false
@@ -128,6 +128,47 @@ function unwrap(source: any, key: string): any {
     }
     const bag = source.data && typeof source.data === "object" ? source.data : source;
     return bag[key];
+}
+
+// ---------------------------------------------------------------- 路径映射
+
+/**
+ * 设备路径 → VFS 路径。
+ *
+ * 宿主的文件与媒体接口只认 VFS 路径。直接把设备路径传进去，会被当成相对路径
+ * 拼到插件自己的数据目录下，于是真实存在的图片被判成"文件不存在"。
+ *
+ *   /storage/emulated/0/xxx   →  /virtual/android/sdcard/xxx
+ *   /storage/self/primary/xxx →  /virtual/android/sdcard/xxx
+ *   /sdcard/xxx               →  /virtual/android/sdcard/xxx
+ *   /virtual/...              →  原样
+ *   其他（相对工作区）         →  原样
+ */
+function toVfsPath(path: string): string {
+    const raw = String(path || "").trim();
+
+    if (!raw) {
+        return raw;
+    }
+
+    if (raw.indexOf("/virtual/") === 0) {
+        return raw;
+    }
+
+    let rest: string | null = null;
+    if (raw.indexOf("/storage/emulated/0/") === 0) {
+        rest = raw.slice("/storage/emulated/0/".length);
+    } else if (raw.indexOf("/storage/self/primary/") === 0) {
+        rest = raw.slice("/storage/self/primary/".length);
+    } else if (raw.indexOf("/sdcard/") === 0) {
+        rest = raw.slice("/sdcard/".length);
+    }
+
+    if (rest === null) {
+        return raw;
+    }
+
+    return "/virtual/android/sdcard/" + rest;
 }
 
 // ---------------------------------------------------------------- 输入解析
@@ -236,29 +277,38 @@ function summarize(done: number, failed: number, verb: string): string {
     return text;
 }
 
-// ---------------------------------------------------------------- 注册图片
+// ---------------------------------------------------------------- 读图
 
 interface AttachedImage {
     path: string;
-    mimeType: string;
-    width: any;
-    height: any;
+    raw: string;
 }
 
-/** 把一张图注册进模型上下文，返回宿主确认过的信息。 */
-async function attachImage(path: string): Promise<AttachedImage> {
-    const raw = await toolCall("media_register_from_path", { type: "image", path: path } as any);
-    const mimeType = unwrap(raw, "mimeType");
+/**
+ * 把一张图送进模型上下文。
+ *
+ * 走 read_file + direct_image:true：宿主会把这文件直接注册成图片附件，
+ * 模型看到的是画面本身，而不是文本解码结果。
+ */
+async function attachImage(vfsPath: string): Promise<AttachedImage> {
+    const raw = await toolCall("read_file", {
+        path: vfsPath,
+        direct_image: true
+    });
 
-    if (!mimeType) {
-        throw new Error("宿主没有返回图片类型，可能不是可识别的图片格式");
+    // 宿主返回 FileContentData。必须把原始结构原样带回去：
+    // 宿主靠识别返回值里的 __type__ 决定是否把图片挂到这一轮上下文。
+    // 拆开重组会丢掉该标记，图片就送不进去。
+    let serialized: string;
+    try {
+        serialized = dataUtils.stringifyJson(raw);
+    } catch (error) {
+        serialized = String(raw);
     }
 
     return {
-        path: path,
-        mimeType: String(mimeType),
-        width: unwrap(raw, "width"),
-        height: unwrap(raw, "height"),
+        path: vfsPath,
+        raw: serialized,
     };
 }
 
@@ -271,7 +321,9 @@ async function readImage(params: any): Promise<any> {
         return fail("没有收到图片路径：请提供 path 或 paths");
     }
 
-    const batch = await runEach(targets, attachImage);
+    const batch = await runEach(targets, function (path: string) {
+        return attachImage(toVfsPath(path));
+    });
 
     if (batch.done.length === 0) {
         return fail("全部读取失败：" + (batch.failed[0] ? batch.failed[0].reason : "未知原因"), {
@@ -308,10 +360,8 @@ async function sendImage(params: any): Promise<any> {
             throw new Error("扩展名不是图片格式");
         }
 
-        const exists = unwrap(await toolCall("file_exists", { path: path } as any), "exists");
-        if (exists !== true) {
-            throw new Error("文件不存在");
-        }
+        // 不做存在性校验：宿主的文件检查走 VFS，设备路径会被错译成插件数据目录，
+        // 真实存在的图片会被判成不存在。渲染不出来时界面会直接显形。
 
         index += 1;
         const alt = targets.length > 1 ? altBase + " " + index : altBase;
@@ -342,7 +392,7 @@ async function sendImage(params: any): Promise<any> {
 
 /** 截图并返回文件路径：只用宿主内置截图，不做平台猜测。 */
 async function grabScreen(): Promise<{ path: string; via: string }> {
-    const shot: any = await toolCall("capture_screenshot", {} as any);
+    const shot = await toolCall("capture_screenshot", {});
     const candidate = typeof shot === "string"
         ? shot
         : (unwrap(shot, "value") || unwrap(shot, "path") || unwrap(shot, "file_path") || "");
@@ -373,7 +423,7 @@ async function readScreen(params: any): Promise<any> {
             await toolCall("copy_file", {
                 source: captured.path,
                 destination: String(bag.save_path),
-            } as any);
+            });
             sourcePath = String(bag.save_path);
         } catch (error) {
             return fail("截图已拿到，但保存到指定位置失败：" + reasonOf(error), {
@@ -383,12 +433,11 @@ async function readScreen(params: any): Promise<any> {
     }
 
     try {
-        const image = await attachImage(sourcePath);
+        const image = await attachImage(toVfsPath(sourcePath));
         return ok("已截屏并送入模型上下文：" + sourcePath, {
             file_path: sourcePath,
             via: captured.via,
-            width: image.width,
-            height: image.height,
+            raw: image.raw,
         });
     } catch (error) {
         return fail("截到图但没能送入上下文：" + reasonOf(error), {
