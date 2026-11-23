@@ -1,7 +1,7 @@
 {
   "private": true,
   "name": "image-io-toolpkg",
-  "version": "1.1.1",
+  "version": "1.2.1",
   "scripts": {
     "build": "tsc -p tsconfig.json"
   },
