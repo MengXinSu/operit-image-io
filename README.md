@@ -24,15 +24,15 @@
 ### `read_image` — 让 AI 看图
 
 ```
-read_image(path: "/sdcard/DCIM/Camera/xxx.jpg")
+read_image(path: "/storage/emulated/0/DCIM/Camera/xxx.jpg")
 read_image(paths: ["/a.jpg", "/b.png"])
 ```
 
-支持三种路径形态：
+支持的路径形态：
 
-- 单张：`path` 传字符串
-- 多张：`paths` 传数组
-- 也接受 JSON 数组字符串，或换行/逗号分隔的字符串
+- 设备绝对路径：`/storage/emulated/0/...`、`/sdcard/...`
+- VFS 路径：`/virtual/android/sdcard/...`
+- 工作区相对路径
 
 **每张图都会进入模型上下文**，模型能直接看到画面。会消耗看图 token，所以只在真的需要看画面时用。
 
@@ -45,11 +45,18 @@ read_image(paths: ["/a.jpg", "/b.png"])
   "data": {
     "requested": 1,
     "count": 1,
-    "images": [{ "path": "...", "mimeType": "image/jpeg", "width": 1542, "height": 2048 }],
+    "images": [
+      {
+        "path": "/virtual/android/sdcard/DCIM/Camera/xxx.jpg",
+        "raw": "{\"__type__\":\"FileContentData\",\"content\":\"1| \",\"path\":\"...\",\"size\":49}"
+      }
+    ],
     "failures": []
   }
 }
 ```
+
+> `data.images[].raw` 是宿主返回结构的原样序列化。**不要解析或重组它**——宿主依赖其中的结构标记来判断是否把图片挂到本轮上下文，拆开就会失效。插件内部已按此约定实现。
 
 ### `send_image` — 把图发给用户
 
@@ -96,10 +103,7 @@ read_screen(save_path: "/sdcard/Pictures/here.png")
 
 ## 安装
 
-1. 下载本仓库 Release 里的 `image_io.toolpkg`
-2. 在 Operit2 的插件管理中导入
-3. 启用容器 `com.viya.image_io`
-4. 启用子包 `image_io`
+在 Operit2 的插件管理里导入 `image_io.toolpkg`，启用容器和子包 `image_io` 即可。
 
 装完在工具列表里应该能看到：
 
@@ -109,37 +113,24 @@ read_screen(save_path: "/sdcard/Pictures/here.png")
 
 ---
 
-## 从源码构建
-
-需要 Node.js 与 TypeScript。
-
-```bash
-npm install
-npm run build
-cp dist/image_io.js packages/image_io.js
-```
-
-然后把 `manifest.json`、`dist/`、`packages/`、`src/` 打成 zip，扩展名改成 `.toolpkg`。
-
-`types/` 目录是 Operit 插件开发套件随附的类型定义，可从应用内的 Skill 目录复制。
-
----
-
 ## 技术说明
 
 - **API 版本**：ToolPkg API `2.0.0`
-- **平台**：Android（依赖宿主的 `media_register_from_path` 与截图能力）
-- **图片注册**：走内置工具 `media_register_from_path`，图片由宿主媒体池管理，不上传到任何第三方服务器
+- **平台**：Android
+- **读图接口**：`read_file` 搭配 `direct_image: true`，由宿主把文件注册为图片附件
+- **路径处理**：内置设备路径 → VFS 路径映射，屏蔽两种路径体系差异
 - **无网络请求**：本插件不联网，不采集任何数据
 
-### 相对 Operit1 同名插件的差异
+### 实现要点
 
-Operit1 时代的「直读图片」使用 `NativeInterface.registerImageFromPath`，该接口在 Operit2 中不存在。本插件改用内置工具 `media_register_from_path`，并把「读图」与「发图」两条通道合并到同一个包里。
+1. **路径必须映射。** 宿主的文件接口只认 VFS 路径；直接传设备路径会被当作相对路径拼到插件数据目录下，导致真实存在的图片被判成「文件不存在」。
+
+2. **返回值不能重组。** 读图接口返回的结构带有类型标记，宿主靠它决定是否把图片挂进本轮上下文。拆开只取部分字段会让图片丢失。
+
+3. **发图不做存在性校验。** 宿主的文件检查走 VFS，设备路径会被错译，真实存在的图片会被误判为不存在。渲染失败时界面会直接显形，不需要预检。
 
 ---
 
 ## 许可
 
 Apache License 2.0
-
-思路参考了社区插件 `see-image`（直读图片）与 `media-display`（本地图片显示）。本实现为 Operit2 重写：更换了图片注册接口、重构了参数解析与批处理结构、合并两条通道并提供统一的错误处理。
