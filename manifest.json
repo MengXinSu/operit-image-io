@@ -2,16 +2,18 @@
   "schema_version": 1,
   "api_version": "2.0.0",
   "toolpkg_id": "com.viya.image_io",
-  "version": "1.1.1",
-  "author": ["Viya"],
+  "version": "1.2.1",
+  "author": [
+    "Viya"
+  ],
   "main": "dist/main.js",
   "display_name": {
     "zh": "图片直读与发送",
     "en": "Image Direct Read & Send"
   },
   "description": {
-    "zh": "两条独立的图片通道：read 把图直接送进模型上下文，让 AI 真正看见画面而不是 OCR 文字；send 把图发到对话里给用户看。另有 read_screen 一步截屏并看图。",
-    "en": "Two separate image channels: read feeds images straight into the model context so the AI actually sees the picture instead of OCR text; send posts images into the conversation for the user. Also includes read_screen for one-step capture-and-view."
+    "zh": "两条独立的图片通道：read 把图直接送进模型上下文，让 AI 真正看见画面而不是 OCR 文字；send 把图发到对话里给用户看。另有 read_screen 一步截屏并看图。支持设备路径、VFS 路径与工作区相对路径。",
+    "en": "Two separate image channels: read feeds images straight into the model context so the AI actually sees the picture instead of OCR text; send posts images into the conversation for the user. Also includes read_screen for one-step capture-and-view. Accepts device paths, VFS paths and workspace-relative paths."
   },
   "enabled_by_default": true,
   "subpackages": [
